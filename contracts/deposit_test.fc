@@ -1,0 +1,10 @@
+#include "imports/stdlib.fc";
+
+() recv_internal(int my_balance, int msg_value, cell in_msg_full, slice in_msg_body) impure {
+
+}
+
+int my_balance() method_id {
+    var [balance, _] = get_balance();
+    return balance;
+}

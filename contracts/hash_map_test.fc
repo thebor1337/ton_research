@@ -1,0 +1,81 @@
+#include "imports/stdlib.fc";
+
+cell load_data() inline {
+    cell data = get_data();
+    slice ds = data.begin_parse();
+    return (ds.slice_bits() == 0) ? new_dict() : data;
+}
+
+() save_dict(cell dic) impure inline {
+    if (dic.dict_empty?()) {
+        set_data(begin_cell().end_cell());
+    } else {
+        set_data(dic);
+    }
+}
+
+() recv_internal(cell in_msg_full, slice in_msg_body) impure {
+    int op = in_msg_body~load_uint(32);
+
+    cell dic = load_data();
+
+    if (op == 1) {
+        int key = in_msg_body~load_uint(256);
+        int valid_until = in_msg_body~load_uint(64);
+        throw_if(1000, valid_until < now());
+        slice address = in_msg_body~load_msg_addr();
+        in_msg_body.end_parse();
+
+        slice value = begin_cell()
+            .store_uint(valid_until, 64)
+            .store_slice(address)
+            .end_cell()
+            .begin_parse();
+
+        dic~udict_set(256, key, value);
+        set_data(dic);
+        return ();
+    }
+    
+    if (op == 2) {
+        int key = in_msg_body~load_uint(256);
+        in_msg_body.end_parse();
+
+        (_, int success) = dic~udict_delete_get?(256, key);
+        throw_unless(1002, success);
+
+        dic.save_dict();
+
+        return ();
+    }
+
+    if (op == 3) {
+        in_msg_body.end_parse();
+
+        int key = -1;
+        do {
+            (key, slice cs, int f) = dic.udict_get_next?(256, key);
+            if (f) {
+                int valid_until = cs~load_uint(64);
+                if (valid_until < now()) {
+                    dic~udict_delete?(256, key);
+                }
+            }
+        } until (~ f);
+
+        dic.save_dict();
+
+        return ();
+    }
+
+    throw(1001);
+}
+
+(int, slice) get_key(int key) method_id {
+    cell dic = load_data();
+    (slice payload, int success) = dic.udict_get?(256, key);
+    throw_unless(98, success);
+    int valid_until = payload~load_uint(64);
+    slice address = payload~load_msg_addr();
+    return (valid_until, address);
+}
