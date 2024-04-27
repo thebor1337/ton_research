@@ -33,16 +33,24 @@ slice parse_sender_address(cell in_msg_full) inline {
     } elseif (op == 2) {
         (slice manager_address, slice memorized_address) = load_data();
 
+        cell body = begin_cell()
+            .store_uint(3, 32) ;; op
+            .store_uint(query_id, 64) ;; query_id
+            .store_slice(manager_address) ;; manager_address
+            .store_slice(memorized_address) ;; memorized_address
+            .end_cell();
+
         cell msg = begin_cell()
             .store_uint(0x18, 6)
             .store_slice(sender_address)
             .store_coins(0)
             .store_uint(0, 1 + 4 + 4 + 64 + 32 + 1 + 1)
-            ;; body
+            ;; .store_uint(1, 1 + 4 + 4 + 64 + 32 + 1 + 1)
             .store_uint(3, 32) ;; op
             .store_uint(query_id, 64) ;; query_id
             .store_slice(manager_address) ;; manager_address
             .store_slice(memorized_address) ;; memorized_address
+            ;; .store_ref(body)
             .end_cell();
 
         send_raw_message(msg, 64);
