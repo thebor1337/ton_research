@@ -2,7 +2,7 @@
 
 #pragma version >=0.4.3;
 
-#include "stdlib.fc";
+#include "../imports/stdlib-new.fc";
 #include "op-codes.fc";
 #include "workchain.fc";
 #include "jetton-utils.fc";
@@ -65,12 +65,15 @@
         ifnot (in_msg_body~load_op() == op::internal_transfer) {
             return ();
         }
+
         in_msg_body~skip_query_id();
         int jetton_amount = in_msg_body~load_coins();
+
         (int total_supply, slice admin_address, slice next_admin_address, cell jetton_wallet_code, cell metadata_uri) = load_data();
         save_data(total_supply - jetton_amount, admin_address, next_admin_address, jetton_wallet_code, metadata_uri);
         return ();
     }
+
     slice sender_address = in_msg_full_slice~load_msg_addr();
     int fwd_fee_from_in_msg = in_msg_full_slice~retrieve_fwd_fee();
     int fwd_fee = get_original_fwd_fee(MY_WORKCHAIN, fwd_fee_from_in_msg); ;; we use message fwd_fee for estimation of forward_payload costs
@@ -81,15 +84,19 @@
 
     if (op == op::mint) {
         throw_unless(error::not_owner, equal_slices_bits(sender_address, admin_address));
+        
         slice to_address = in_msg_body~load_msg_addr();
         check_same_workchain(to_address);
+
         int ton_amount = in_msg_body~load_coins();
         cell master_msg = in_msg_body~load_ref();
         in_msg_body.end_parse();
 
         ;; see internal_transfer TL-B layout in jetton.tlb
         slice master_msg_slice = master_msg.begin_parse();
+
         throw_unless(error::invalid_op, master_msg_slice~load_op() == op::internal_transfer);
+        
         master_msg_slice~skip_query_id();
         int jetton_amount = master_msg_slice~load_coins();
         master_msg_slice~load_msg_addr(); ;; from_address
@@ -179,6 +186,7 @@
     ;; can be used to lock, unlock or reedem funds
     if (op == op::call_to) {
         throw_unless(error::not_owner, equal_slices_bits(sender_address, admin_address));
+
         slice to_address = in_msg_body~load_msg_addr();
         int ton_amount = in_msg_body~load_coins();
         cell master_msg = in_msg_body~load_ref();
@@ -194,6 +202,7 @@
             master_msg_slice~load_msg_addr(); ;; to_owner_address
             master_msg_slice~load_msg_addr(); ;; response_address
             master_msg_slice~skip_maybe_ref(); ;; custom_payload
+            
             int forward_ton_amount = master_msg_slice~load_coins(); ;; forward_ton_amount
             check_either_forward_payload(master_msg_slice); ;; either_forward_payload
 
@@ -214,7 +223,9 @@
         } else {
             throw(error::invalid_op);
         }
+
         send_to_jetton_wallet(to_address, jetton_wallet_code, ton_amount, master_msg, FALSE);
+
         return ();
     }
 

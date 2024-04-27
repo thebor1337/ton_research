@@ -1,4 +1,4 @@
-#include "stdlib.fc";
+#include "../imports/stdlib-new.fc";
 #include "op-codes.fc";
 
 const MY_WORKCHAIN = BASECHAIN;
