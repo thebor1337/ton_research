@@ -1,0 +1,75 @@
+#include "../imports/stdlib.fc";
+#include "constants.fc";
+
+() set_claimed() impure inline {
+    set_data(
+        begin_cell()
+        .store_uint(1, 1)
+        .end_cell()
+    );
+}
+
+;; ? what if bounced back after external? (is it possible?)
+;; ? we marked as claimed
+() recv_internal() impure {
+    ;; do nothing
+}
+
+() recv_external(int my_balance, int msg_value, cell in_msg_full, slice in_msg_body) impure {
+    ;; check if enough balance to process
+    throw_unless(
+        error::not_enough_coins,
+        my_balance >= const::min_balance + const::fee
+    );
+
+    slice ds = get_data().begin_parse();
+    ;; check if not claimed yet
+    throw_if(
+        error::already_claimed,
+        ds~load_uint(1)
+    );
+
+    ;; mark as claimed
+    set_claimed();
+
+    slice master_address = ds~load_msg_addr();
+
+    int proof_hash = ds~load_uint(256);
+    int index = ds~load_uint(256);
+
+    int query_id = in_msg_body~load_uint(64);
+    cell proof = in_msg_body~load_ref();
+
+    ;; check if a user tries to attach different proof
+    throw_unless(
+        error::wrong_proof,
+        proof.cell_hash() == proof_hash
+    );
+
+    ;; everything is fine, we can process the message
+    accept_message();
+
+    ;; keep some balance for storage fees (in case if the next transaction failed)
+    raw_reserve(const::min_balance, 0);
+
+    cell msg_body = begin_cell()
+        .store_uint(op::process_claim, 32)
+        .store_uint(query_id, 64)
+        .store_ref(proof)
+        .store_uint(index, 256)
+        .end_cell();
+
+    builder msg = begin_cell()
+        .store_uint(0x10, 6)
+        .store_slice(master_address)
+        .store_coins(0) ;; no coins specified since mode = 128
+        .store_uint(1, 1 + 4 + 4 + 64 + 32 + 1 + 1)
+        .store_ref(msg_body);
+
+    ;; send all remaining balance to the master contract
+    send_raw_message(msg.end_cell(), 128);
+}
+
+int is_claimed() method_id {
+    return get_data().begin_parse().preload_uint(1);
+}

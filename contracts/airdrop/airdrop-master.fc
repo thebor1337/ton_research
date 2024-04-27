@@ -1,0 +1,159 @@
+#include "../imports/stdlib.fc";
+#include "../jetton/jetton-utils.fc";
+#include "constants.fc";
+
+(slice, int, cell) load_data() inline {
+    slice ds = get_data().begin_parse();
+    return (
+        ds~load_msg_addr(),
+        ds~load_uint(256),
+        ds~load_ref()
+    );
+}
+
+() save_data(
+    slice jetton_pool_address,
+    int merkle_root,
+    cell airdrop_wallet_code
+) impure inline {
+    set_data(
+        begin_cell()
+        .store_slice(jetton_pool_address)
+        .store_uint(merkle_root, 256)
+        .store_ref(airdrop_wallet_code)
+        .end_cell()
+    );
+}
+
+cell calculate_airdrop_wallet_state_init(
+    cell airdrop_wallet_code,
+    int proof_hash,
+    int index
+) inline {
+    return begin_cell()
+        .store_uint(6, 5) ;; 00110 ?
+        .store_ref(airdrop_wallet_code)
+        .store_ref(
+            begin_cell()
+            .store_uint(0, 1)
+            .store_slice(my_address())
+            .store_uint(proof_hash, 256)
+            .store_uint(index, 256)
+            .end_cell()
+        )
+        .end_cell();
+}
+
+slice calculate_airdrop_wallet_address(cell state_init) {
+    return begin_cell()
+        .store_uint(0x400, 11) ;; 10000000000
+        .store_uint(cell_hash(state_init), 256)
+        .end_cell()
+        .begin_parse();
+}
+
+() send_tokens(slice jetton_pool_wallet, int query_id, slice recipient, int amount) impure inline {
+    cell master_msg = begin_cell()
+        .store_uint(op::jetton::transfer, 32)
+        .store_uint(query_id, 64)
+        .store_coins(amount)
+        .store_slice(recipient)
+        .store_slice(recipient)
+        .store_uint(0, 1)
+        .store_coins(10000000)
+        .store_uint(0, 1)
+        .end_cell();
+    
+    builder msg = begin_cell()
+        .store_uint(0x18, 6)
+        .store_slice(jetton_pool_wallet)
+        .store_coins(0)
+        .store_uint(1, 1 + 4 + 4 + 64 + 32 + 1 + 1)
+        .store_ref(master_msg);
+
+    send_raw_message(msg.end_cell(), 64);
+}
+
+() recv_internal(int my_balance, int msg_value, cell in_msg_full, slice in_msg_body) impure {
+    ;; should contain at list 96 bits (32 op, 64 query_id)
+    if (in_msg_body.slice_bits() < 96) {
+        return ();
+    }
+
+    int op = in_msg_body~load_uint(32);
+    int query_id = in_msg_body~load_uint(64);
+
+    (_, slice sender) = in_msg_full.begin_parse().skip_bits(4).load_msg_addr();
+
+    (slice jetton_pool_address, int merkle_root, cell airdrop_wallet_code) = load_data();
+
+    ;; initialization phase
+    if (op == op::init) {
+        ;; there must be no jetton pool address stored yet during initialization phase
+        throw_unless(
+            error::already_deployed,
+            jetton_pool_address.preload_uint(2) == 0
+        );
+
+        save_data(
+            in_msg_body~load_msg_addr(),
+            merkle_root,
+            airdrop_wallet_code
+        );
+    }
+    ;; claim phase
+    ;; must be called by an airdrop wallet
+    elseif (op == op::process_claim) {
+        cell proof = in_msg_body~load_ref();
+        int index = in_msg_body~load_uint(256);
+
+        (slice cs, int is_exotic?) = proof.begin_parse_exotic();
+        throw_unless(42, is_exotic?);
+        throw_unless(43, cs~load_uint(8) == 3);
+        throw_unless(44, merkle_root == cs~load_uint(256));
+
+        cell dict = cs~load_ref();
+
+        (slice entry, int is_found?) = dict.udict_get?(256, index);
+        throw_unless(45, is_found?);
+
+        throw_unless(
+            error::wrong_sender,
+            equal_slices(
+                sender,
+                calculate_airdrop_wallet_address(
+                    calculate_airdrop_wallet_state_init(airdrop_wallet_code, proof.cell_hash(), index)
+                )
+            )
+        );
+
+        slice recipient = entry~load_msg_addr();
+        int amount = entry~load_coins();
+
+        send_tokens(
+            jetton_pool_address,
+            query_id,
+            recipient,
+            amount
+        );
+    }
+    else {
+        throw(error::unknown_op);
+    }
+}
+
+(slice, int, cell) get_contract_data() method_id {
+    slice ds = get_data().begin_parse();
+    return (
+        ds~load_msg_addr(),
+        ds~load_uint(256),
+        ds~load_ref()
+    );
+}
+
+slice get_wallet_address(slice owner, int proof_hash, int index) method_id {
+    (_, _, cell airdrop_wallet_code) = load_data();
+    return calculate_airdrop_wallet_address(
+        calculate_airdrop_wallet_state_init(airdrop_wallet_code, proof_hash, index)
+    );
+}
